@@ -24,4 +24,4 @@ base_cache_folder = '/Users/nickp/data/cache'
 scene = Scene(planId=planId, base_cache_folder=base_cache_folder)
 ```
 
-See `examples.py` for a number of usage examples.
+See `examples` for a number of usage examples.
