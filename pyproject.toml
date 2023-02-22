@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "glue"
-description = "My really awesome glue package."
-keywords = ["random", "cool"]
+description = "the glue package"
+keywords = ["geomatics", "vision"]
 classifiers = ["Development Status :: 5 - Production/Stable",
  "Environment :: Console",
  "Intended Audience :: Science/Research",

@@ -4,25 +4,28 @@ import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
 
-from .pointcloud_utils import PointCloud, las2numpy, enu2lla, lla2enu
+from .pointcloud_utils import PointCloud
+from .conv_utils import enu2lla, lla2enu
 from .camera_util import Camera, Sensor, Transform
 from .mesh_util import Mesh
-import os
-
-PREFIX = 'www'
-GQL_PREFIX = 'api'
-ISSUE_TYPE = 'IssueType:624'
-
+from .plan_util import Api
+from .issue_utils import Issue
+from .config import config
 
 class Scene(object):
 
-    def __init__(self, planId, base_cache_folder):
+    def __init__(self, plan_id, base_cache_folder):
 
-        self.planId = planId
+        self.plan_id = plan_id
+        self.plan = None
+        self.transform = None
+        self.sensor = None
+        self.cameras = []
+        self.base_cache_folder = base_cache_folder
 
         if os.environ.get('DRONEDEPLOY', None) is None:
-            print("Please set your DRONEDEPLOY environment variable ")
-            print("from Chrome JS Console -> Application -> Storage -> http://www.dronedeploy.com -> ls.prod_id_token")
+            print("Please set your 'DRONEDEPLOY' environment variable from the browser")
+            print("JS Console -> Application -> Storage -> http://www.dronedeploy.com -> ls.prod_id_token")
             import sys
             sys.exit(0)
         else:
@@ -33,23 +36,22 @@ class Scene(object):
             "content-type": "application/json",
         }
 
-        self.cameras = []
-        self.plan = None
-        self.transform = None
-        self.sensor = None
-        self.base_cache_folder = base_cache_folder
+        self.init()
+        self.issue = Issue(self.plan_id, self.folder_id, self.headers, self.pointcloud, self.transform)
+        self.api = Api(self.plan_id, self.headers)
 
+    def init(self):
         self.create_cache()
-        print('cache .......... ', click.style('[OK]', fg='green', bold=True))
-    
+        print('cache .......... ', click.style('[OK]', fg='green', bold=True), f'({self.cache_folder})')
+
+        self.download_plan()
+        print('plan ........... ', click.style('[OK]', fg='green', bold=True))
+        
         self.download_cameras()
         print('cameras ........ ', click.style('[OK]', fg='green', bold=True))
     
-        self.download_plan()
-        print('plan ........... ', click.style('[OK]', fg='green', bold=True))
-        self.folderId = self.plan.get('folder_id')
-        print('images ......... ', click.style('[OK]', fg='green', bold=True))
         self.download_images()
+        print('images ......... ', click.style('[OK]', fg='green', bold=True))
     
         self.download_pointcloud()
         print('pointcloud ..... ', click.style('[OK]', fg='green', bold=True))
@@ -57,292 +59,36 @@ class Scene(object):
         self.download_mesh()
         print('mesh ........... ', click.style('[OK]', fg='green', bold=True))
         
-        self.download_preview_ortho()
-        print('orthomosaic .... ', click.style('[OK]', fg='green', bold=True))
 
     def create_cache(self):
         path = Path(self.base_cache_folder)
         path.mkdir(exist_ok=True)
-        path = Path(self.base_cache_folder) / self.planId
+        path = Path(self.base_cache_folder) / self.plan_id
         path.mkdir(exist_ok=True)
 
     @property
     def cache_folder(self):
-        return Path(self.base_cache_folder) / self.planId
+        return Path(self.base_cache_folder) / self.plan_id
 
     def download_plan(self):
         cache = f'{self.cache_folder}/plan.json'
         if os.path.exists(cache):
             response = json.load(open(cache))
         else:
-            response = requests.get(f'https://{PREFIX}.dronedeploy.com/api/v1/plan/{self.planId}', headers=self.headers)
-            response = response.json()
+            response = self.api.get('plan')
             json.dump(response, open(cache, mode='w'))     
+        
         self.plan = response
+        self.folder_id = self.plan.get('folder_id')
     
     def download_images(self):
         for camera_index, camera in enumerate(self.cameras):
             self.download_image(camera.image)
 
     def download_image(self, image):
-        url = f'https://{PREFIX}.dronedeploy.com/api/v2/plans/{self.planId}/images/{image}/download?jwt_token={self.auth}'
+        url = f'https://{config.PREFIX}.dronedeploy.com/api/v2/plans/{self.plan_id}/images/{image}/download?jwt_token={self.auth}'
         local = self.download_signed_url(url, image, ignore_404=False, guess_ext=False)
         return local
-        
-    def delete_issue(self, issue):
-        query = {
-            "operationName":"DeleteIssue",
-            "variables":{
-                "input":{
-                    "id": issue,
-                    "deleted": True
-                }
-            },
-            "query": """
-                mutation DeleteIssue($input: UpdateIssueInput!) {
-                    updateIssue(input: $input) {
-                        issue {
-                        id
-                        }
-                    }
-                }
-            """
-        }
-        response = requests.post(f'https://{GQL_PREFIX}.dronedeploy.com/graphql', headers=self.headers, data=json.dumps(query))
-
-    def list_issues(self):
-        query = {
-        "operationName": "LoadPaginatedIssues",
-        "variables": {
-            "cursor": "",
-            "project": f"Project:{self.folderId}"
-        },
-        "query": """query LoadPaginatedIssues($project: ID!, $cursor: String) {
-            project(id: $project) {
-                issues(first: 100, after: $cursor) {
-                    edges {
-                        node {
-                            ...IssueView
-                        }
-                    }
-        
-                }
-            }
-        }
-        fragment IssueView on Issue {
-            id
-            createdIn
-            folder {
-                id
-            }
-            initialPlan {
-                id
-            }
-            location {
-                lng
-                lat
-                alt
-            }
-        }
-        """
-        }
-        response = requests.post(f'https://{GQL_PREFIX}.dronedeploy.com/graphql', headers=self.headers, data=json.dumps(query))
-        response = response.json()
-        for issue in response['data']['project']['issues']['edges']:
-            yield (issue['node']['id'])
-
-    def create_issue_ortho(self, xys):
-
-        for xy in xys:
-
-            lng = self.bounds[0] + (self.bounds[2]-self.bounds[0]) * (xy[0] / self.ortho_width)
-            lat = self.bounds[1] + (self.bounds[3]-self.bounds[1]) * (1.0 - xy[1] / self.ortho_height)
-
-            data = {   
-                "annotation_type":"LOCATION",
-                "color":"#00bbd3",
-                "color_locked":False,
-                "comments":[],
-                "content":[],
-                "deleted":False,
-                "description":"",
-                "fill_color":"#40ccde",
-                "geometry":{
-                    "lat":lat,
-                    "lng":lng
-                },
-                "info":{
-                    "geometry":[
-                        {
-                            "type":"Coords",
-                            "value":{
-                                "lat":lat,
-                                "lng":lng
-                            }
-                        }
-                    ],
-                    "ml_assisted":False
-                },
-                "plan_id":self.planId,
-                "type":"marker",
-                "issue":{
-                    "created_in":"2d",
-                    "location":{
-                        "lat":lat,
-                        "lng":lng,
-                        "alt":0
-                    },
-                    "type_id":ISSUE_TYPE
-                },
-                "measurements_3d":[]
-            }
-
-            url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations/'
-            response = requests.post(url, headers=self.headers,  data=json.dumps(data))
-            response = response.json()
-
-    def create_issue(self, camera, xys, _pixel_buffer=5):
-
-        for xy in xys:
-            enu = self.pointcloud.ray_cast(camera, xy)
-            lla = enu2lla(enu, self.transform.R, self.transform.S, self.transform.T)
-            vertices = [
-                dict(x=(xy[0] - _pixel_buffer) / camera.width, y=(xy[1] - _pixel_buffer) / camera.height),
-                dict(x=(xy[0] + _pixel_buffer) / camera.width, y=(xy[1] - _pixel_buffer) / camera.height),
-                dict(x=(xy[0] + _pixel_buffer) / camera.width, y=(xy[1] + _pixel_buffer) / camera.height),
-                dict(x=(xy[0] - _pixel_buffer) / camera.width, y=(xy[1] + _pixel_buffer) / camera.height),
-                dict(x=(xy[0] - _pixel_buffer) / camera.width, y=(xy[1] - _pixel_buffer) / camera.height),
-            ]
-            
-            lng, lat, alt = lla[0]
-
-            issue = {
-                "operationName":"CreateIssue",
-                "variables":{
-                    "input":{
-                        "assetName": camera.image,
-                        "createdIn": "3d",
-                        "folderId": self.folderId,
-                        "location": {
-                            # Fetch 3D coordinates from pointcloud
-                            "lat":lat,
-                            "lng":lng,
-                            "alt":alt
-                        },
-                        "mediaBoundingPolygon": {
-                            # Bounding box in image [0 .. 1] x [0 .. 1]
-                            "vertices":vertices
-                        },
-                        "planId":self.planId,
-                        "summary":"",
-                        "typeId":ISSUE_TYPE
-                    }
-                },
-
-                "query": """
-
-                mutation CreateIssue($input: CreateIssueInput!) {
-                    createIssue(input: $input) {
-                        issue {
-                            ...FullIssue
-                        }
-                    }
-                }
-                fragment FullIssue on Issue {
-                    id
-                    closedPlan {
-                        id
-                    }
-                    createdBy {
-                        id
-                        firstName
-                        lastName
-                        username
-                    }
-                    createdIn
-                        comments {
-                            id
-                            body
-                            createdBy {
-                                username
-                                firstName
-                                lastName
-                            }
-                            dateCreation
-                        }
-                    dateClosed
-                    dateCreation
-                    dateModified
-                    folder {
-                        id
-                    }
-                    initialPlan {
-                        id
-                    }
-                    issueProjectNumber
-                    location {
-                        alt
-                        lat
-                        lng
-                    }
-                    modifiedBy {
-                        id
-                        firstName
-                        lastName
-                        username
-                    }
-                    organization {
-                        id
-                        name
-                        currencyCode
-                    }
-                    repairCost
-                    severity {
-                        ...IssueSeverity
-                    }
-                    statusName
-                    summary
-                    type {
-                        ...IssueType
-                    }
-                    views {
-                        id
-                        assetUrl
-                        assetPath
-                        dateCreation
-                        dateModified
-                        mediaBoundingPolygon {
-                            vertices {
-                                x
-                                y
-                            }
-                        }
-                    }
-                    externalIssues {
-                        appId
-                        id
-                        externalId
-                        externalUrl
-                        context
-                    }
-                }
-                fragment IssueSeverity on IssueSeverity {
-                    id
-                    name
-                    value
-                }
-                fragment IssueType on IssueType {
-                    id
-                    name
-                    isDefault
-                }
-                """
-            }
-
-
-            response = requests.post(f'https://{GQL_PREFIX}.dronedeploy.com/graphql', headers=self.headers, data=json.dumps(issue))
-            response = response.json()
-            # print(json.dumps(response, indent=2))
 
     @property
     def extent(self):
@@ -359,27 +105,14 @@ class Scene(object):
             lngs.max(),
             lats.max(),
         ]
-    
-    @property
-    def ortho_width(self):
-        filename = self.cache_folder / 'ortho_thumbnail.png'
-        img = cv2.imread(str(filename))
-        return img.shape[1]
-
-    @property
-    def ortho_height(self):
-        filename = self.cache_folder / 'ortho_thumbnail.png'
-        img = cv2.imread(str(filename))
-        return img.shape[0]
-
-    
+        
     def download_cameras(self):
         cache = f'{self.cache_folder}/cameras.json'
         if os.path.exists(cache):
             response = json.load(open(cache))
         else:
             print("downloading cameras")
-            response = requests.get(f'https://{PREFIX}.dronedeploy.com/api/v1/camfile/{self.planId}', headers=self.headers)
+            response = requests.get(f'https://{config.PREFIX}.dronedeploy.com/api/v1/camfile/{self.plan_id}', headers=self.headers)
             response = response.json()
             json.dump(response, open(cache, mode='w'))
 
@@ -416,19 +149,21 @@ class Scene(object):
         return self.cameras
 
     def get_area_annotations(self):
-        url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations?plan_id={self.planId}&embed=graph'
+        url = f'https://{config.PREFIX}.dronedeploy.com/api/v2/annotations?plan_id={self.plan_id}&embed=graph'
         response = requests.get(url, headers=self.headers)
         for geometry in response.json():
             if geometry['annotation_type'] == 'AREA':
                 # if geometry['color'] == '#fe9700':
                 yield geometry['geometry']
 
-    def delete_annotation(self):
-        url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations?plan_id={self.planId}&embed=graph'
+    def delete_area_annotation(self):
+        url = f'https://{config.PREFIX}.dronedeploy.com/api/v2/annotations?plan_id={self.plan_id}&embed=graph'
         response = requests.get(url, headers=self.headers)
         for geometry in response.json():
+            if geometry['annotation_type'] != 'AREA': 
+                continue
             # print(geometry['id'])
-            url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations/{geometry["id"]}'
+            url = f'https://{config.PREFIX}.dronedeploy.com/api/v2/annotations/{geometry["id"]}'
             # print(url)
             response = requests.delete(url, headers=self.headers)
 
@@ -443,28 +178,8 @@ class Scene(object):
                 ret.append((x, y)) 
             return ret
 
-    def create_count_annotations_latlngs(self, geometry):
-        url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations/'
-        data = {
-            "annotation_type":"COUNT",
-            "color": "#f39c12",
-            "color_locked":False,
-            "comments":[],
-            "content":[],
-            "deleted":False,
-            "description":"AI Count",
-            "fill_color": "#e67e22",
-            "geometry":geometry,
-            "plan_id": f"{self.planId}",
-            "type":"polygon",
-            "measurements_3d":[]
-        }
-
-        response = requests.post(url, headers=self.headers,  data=json.dumps(data))
-        response = response.json()
-
     def create_area_annotation_latlngs(self, geometry):
-        url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations/'
+        url = f'https://{config.PREFIX}.dronedeploy.com/api/v2/annotations/'
         data = {
             "annotation_type":"AREA",
             "color":"#00ff00",
@@ -475,7 +190,7 @@ class Scene(object):
             "description":"AI Created Area",
             "fill_color":"#00ff00",
             "geometry":geometry,
-            "plan_id": f"{self.planId}",
+            "plan_id": f"{self.plan_id}",
             "type":"markergroup",
             "measurements_3d":[]
         }
@@ -493,9 +208,8 @@ class Scene(object):
             lng = self.bounds[0] + (self.bounds[2]-self.bounds[0]) * (xy[0] / self.ortho_width)
             lat = self.bounds[1] + (self.bounds[3]-self.bounds[1]) * (1.0 - xy[1] / self.ortho_height)
             geometry.append(dict(lat=lat, lng=lng))
-
         
-        url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations/'
+        url = f'https://{config.PREFIX}.dronedeploy.com/api/v2/annotations/'
         data = {
             "annotation_type":"AREA",
             "color":"#00ff00",
@@ -506,7 +220,7 @@ class Scene(object):
             "description":"AI Created Area",
             "fill_color":"#00ff00",
             "geometry":geometry,
-            "plan_id": f"{self.planId}",
+            "plan_id": f"{self.plan_id}",
             "type":"markergroup",
             "measurements_3d":[]
         }
@@ -514,6 +228,26 @@ class Scene(object):
         response = requests.post(url, headers=self.headers,  data=json.dumps(data))
         response = response.json()
         print(response)
+    
+    def create_count_annotations_latlngs(self, geometry):
+        url = f'https://{config.PREFIX}.dronedeploy.com/api/v2/annotations/'
+        data = {
+            "annotation_type":"COUNT",
+            "color": "#f39c12",
+            "color_locked":False,
+            "comments":[],
+            "content":[],
+            "deleted":False,
+            "description":"AI Count",
+            "fill_color": "#e67e22",
+            "geometry":geometry,
+            "plan_id": f"{self.plan_id}",
+            "type":"polygon",
+            "measurements_3d":[]
+        }
+
+        response = requests.post(url, headers=self.headers,  data=json.dumps(data))
+        response = response.json()
 
     def create_count_annotations(self, camera, xys, _pixel_buffer=15):
 
@@ -524,7 +258,7 @@ class Scene(object):
             lng, lat, alt = lla[0]
             geometry.append(dict(lat=lat, lng=lng))
 
-        url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations/'
+        url = f'https://{config.PREFIX}.dronedeploy.com/api/v2/annotations/'
         data = {
             "annotation_type":"COUNT",
             "color": "#f39c12",
@@ -535,62 +269,13 @@ class Scene(object):
             "description":"AI Count",
             "fill_color": "#e67e22",
             "geometry":geometry,
-            "plan_id": f"{self.planId}",
+            "plan_id": f"{self.plan_id}",
             "type":"polygon",
             "measurements_3d":[]
         }
 
         response = requests.post(url, headers=self.headers,  data=json.dumps(data))
         response = response.json()
-
-    # TODO: This is not entirely accurate as we don't have accurate bounds
-    def create_count_annotations_ortho(self, xys):
-
-        geometry = []
-
-        for xy in xys:
-            lng = self.bounds[0] + (self.bounds[2]-self.bounds[0]) * (xy[0] / self.ortho_width)
-            lat = self.bounds[1] + (self.bounds[3]-self.bounds[1]) * (1.0 - xy[1] / self.ortho_height)
-            geometry.append(dict(lat=lat, lng=lng))
-
-        url = f'https://{PREFIX}.dronedeploy.com/api/v2/annotations/'
-        data = {
-            "annotation_type":"COUNT",
-            "color": "#f39c12",
-            "color_locked":False,
-            "comments":[],
-            "content":[],
-            "deleted":False,
-            "description":"AI Count",
-            "fill_color": "#e67e22",
-            "geometry":geometry,
-            "plan_id": f"{self.planId}",
-            "type":"polygon",
-            "measurements_3d":[]
-        }
-
-        response = requests.post(url, headers=self.headers,  data=json.dumps(data))
-        response = response.json()
-
-    def download_preview_ortho(self) -> str:
-
-        cache = f'{self.cache_folder}/ortho_thumbnail.png'
-        if os.path.exists(cache):
-            return cache
-
-        project_resp = requests.get(
-            f"https://{PREFIX}.dronedeploy.com/api/v1/folders/{self.folderId}",
-            headers=self.headers,
-            params={"type": "site", "include_thumbnail_urls": "ortho"},
-        )
-
-
-        assert project_resp.status_code == 200
-        project_json = project_resp.json()
-        signed_ortho_url = project_json["thumbnails"]["ortho_thumbnail_url"]
-        assert ".png" in signed_ortho_url
-        return self.download_signed_url(signed_ortho_url, "ortho_thumbnail.png")
-
 
     def download_signed_url(self, signed_url, filename, ignore_404=False, guess_ext=False) -> str:
 
@@ -627,23 +312,16 @@ class Scene(object):
         return local_with_ext
 
     def download_export(self, plan_json, export_filename) -> str:
-
         cache = f'{self.cache_folder}/{export_filename}'
         if os.path.exists(cache):
             return cache
-        
-        signed_url = next(
-            e["url"] for e in plan_json["exports"]
-            if export_filename in e["url"]
-        )
+        signed_url = next( e["url"] for e in plan_json["exports"] if export_filename in e["url"] )
         return self.download_signed_url(signed_url, export_filename)
 
     def download_pointcloud(self):
         self.download_export(self.plan, "points.zip"),
         pointcloud = self.cache_folder / 'points.las'
-        numpycloud = self.cache_folder / 'points.npy'
-        points = las2numpy(self.transform.Rinv, self.transform.Sinv, self.transform.T, pointcloud, numpycloud)
-        self.pointcloud = PointCloud(points)
+        self.pointcloud = PointCloud(pointcloud, self.transform)
         
     def download_mesh(self):
         self.download_export(self.plan, "model.zip"),

@@ -1,44 +1,35 @@
 import numpy as np
 import pymap3d, laspy, os
 from dataclasses import dataclass
+from .conv_utils import lla2enu
 
-def read_points(filename, is_wgs84=False):
-    f = laspy.read(filename)
-    points = np.vstack([ f.x, f.y, f.z, f.red / 256, f.green / 256, f.blue / 256, ]).T
-    return points
-
-def lla2enu(points, Rinv, Sinv, T):
-    ecef = pymap3d.geodetic2ecef(points[:, 1], points[:, 0], points[:, 2])
-    ecef = np.vstack(ecef).T
-    return Rinv.dot(Sinv).dot( (ecef - T.T).T ).T
-
-def enu2lla(points, R, S, T):
-    ecef = R.dot(points.T)*S + T.reshape((3, 1))
-    ecef = ecef.T
-    lla = np.array(pymap3d.ecef2geodetic(ecef[:, 0], ecef[:, 1], ecef[:, 2])).T
-    lla = lla[:, [1, 0, 2]]
-    return lla
-
-def las2numpy(Rinv, Sinv, T, pointsfile, numpycloud):
-    if os.path.exists(numpycloud):
-        return np.load(numpycloud)
-    print("loading pointcloud")
-    points = read_points(pointsfile)
-    print(f"loaded {points.shape} points")
-    print("converting to enu")
-    colors = points[:, -3:]
-    points = lla2enu(points, Rinv, Sinv, T)
-    points = np.hstack([points, colors])
-    print("saving npy", points.shape)
-    np.save(numpycloud, points)
-    return points
 
 @dataclass
 class PointCloud:
-    def __init__(self, points):
+    def __init__(self, pointcloud, transform):
+        numpycloud = str(pointcloud).replace(".las", ".npy")
+        self.las2numpy(transform.Rinv, transform.Sinv, transform.T, pointcloud, numpycloud)
+        
+    def read_points(self, filename, is_wgs84=False):
+        f = laspy.read(filename)
+        points = np.vstack([ f.x, f.y, f.z, f.red / 256, f.green / 256, f.blue / 256, ]).T
+        return points
+
+    def las2numpy(self, Rinv, Sinv, T, pointsfile, numpycloud):
+        if os.path.exists(numpycloud):
+            self.points = np.load(numpycloud)
+            return 
+        
+        print("loading pointcloud")
+        points = self.read_points(pointsfile)
+        print(f"loaded {points.shape} points")
+        print("converting to enu")
+        colors = points[:, -3:]
+        points = lla2enu(points, Rinv, Sinv, T)
+        points = np.hstack([points, colors])
+        print("saving npy", points.shape)
+        np.save(numpycloud, points)
         self.points = points
-        self.vote = [0] * self.points.shape[0]
-        self.total = [0] * self.points.shape[0]
 
     @property
     def num_points(self):
