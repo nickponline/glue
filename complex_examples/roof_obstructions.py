@@ -17,7 +17,7 @@ if __name__ == '__main__':
 
     import glob
     pylab.figure()
-    for filename in glob.glob('/Users/nickp/Desktop/Dropbox/sunrun-ortho/*.jpg'):
+    for filename in glob.glob('/Users/nickp/Desktop/Dropbox/ortho/*.jpg'):
 
         img = cv2.imread(filename)
 

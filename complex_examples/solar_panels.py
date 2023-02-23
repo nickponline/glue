@@ -119,21 +119,21 @@ def poly2latlng(polygon):
         
 
 if __name__ == '__main__':
-    # planId='5df3c67892e8f231d110b585'
-    # base_cache_folder = '/Users/nickp/data/cache'
-    # scene = Scene(planId=planId, base_cache_folder=base_cache_folder)
-    # A = post_process('/Users/nickp/Dropbox/solar-1-output', '/Users/nickp/Dropbox/solar-1')
+    planId='5df3c67892e8f231d110b585'
+    base_cache_folder = '/Users/nickp/data/cache'
+    scene = Scene(planId=planId, base_cache_folder=base_cache_folder)
+    A = post_process('/Users/nickp/Dropbox/solar-1-output', '/Users/nickp/Dropbox/solar-1')
 
-    # planId='5df3d00192e8f231d110b58a'
-    # base_cache_folder = '/Users/nickp/data/cache'
-    # scene = Scene(planId=planId, base_cache_folder=base_cache_folder)
-    # B = post_process('/Users/nickp/Dropbox/solar-2-output', '/Users/nickp/Dropbox/solar-2')
+    planId='5df3d00192e8f231d110b58a'
+    base_cache_folder = '/Users/nickp/data/cache'
+    scene = Scene(planId=planId, base_cache_folder=base_cache_folder)
+    B = post_process('/Users/nickp/Dropbox/solar-2-output', '/Users/nickp/Dropbox/solar-2')
 
-    # with open('A.txt', mode='w') as f:
-    #     f.write(A.wkt)
+    with open('A.txt', mode='w') as f:
+        f.write(A.wkt)
 
-    # with open('B.txt', mode='w') as f:
-    #     f.write(B.wkt)
+    with open('B.txt', mode='w') as f:
+        f.write(B.wkt)
 
     A = shapely.wkt.loads(open("A.txt").read())
     B = shapely.wkt.loads(open("B.txt").read())
@@ -159,95 +159,4 @@ if __name__ == '__main__':
     pylab.show()
 
     
-    # import random
-    # for polygon in polygons:
-    #     scene.create_area_annotation_latlngs(polygon)
-    
-
-    
-    # print(scene.pointcloud.points[0])
-    # import glob
-    # # scene.pointcloud.display()
-    # x, y = scene.enu_areas()[0]
-    # scene.pointcloud.crop_enu(x, y, approx=False)
-   # scene.mesh.display(scene.cameras)
-   
-    # for camera in scene.cameras:
-
-    #     import os        
-    #     filename = f'/Users/nickp/code/maskformer/face-semantic/prediction-{camera.image.split(".")[0]}.png'
-
-    #     if not os.path.exists(filename):
-    #         continue
-    #     print(filename)
-    #     import cv2
-    #     import numpy as np
-    #     img = cv2.imread(filename, 0)
-    #     loc = np.where(img == 76)
-    #     mask = np.zeros_like(img)
-    #     mask[loc] = 255
-    #     scene.pointcloud.crop_mask_update(camera, mask)
-    
-    # scene.pointcloud.crop_mask()
-    # scene.pointcloud.display()
-        # break
-    # import cv2
-    # x, y = scene.enu_areas()[0]
-    # scene.pointcloud.crop_enu(x, y, approx=False)
-    # for camera in scene.cameras:
-    #     image = scene.pointcloud.view_from(camera)
-    #     cv2.imwrite(f"{camera.index}.png", image)
-    
-    # scene.pointcloud
-        # display
-        # project
-        # crop
-        # raycast
-
-    # camera = scene.cameras[0]
-    # print(camera.filename)
-    # pixels_of_interest = [
-    #     [1678, 1867],
-    #     [1900, 1874],   
-    # ]
-
-    # scene.pointcloud.crop_xy(scene.cameras[0], pixels_of_interest[0])
-    # scene.pointcloud.display(scene.cameras)
-
-
-    # scene.create_count_annotations(scene.cameras[0], pixels_of_interest)
-
-    # pixels_of_interest = [
-    #     [710, 560]
-    # ]
-    # scene.create_count_annotations_ortho(pixels_of_interest)
-    
-    # import random
-    # latlngs = [
-    #     dict(lat=random.uniform(scene.bounds[1], scene.bounds[3]), lng=random.uniform(scene.bounds[0], scene.bounds[2])) for _ in range(5)
-    # ]
-    # scene.create_count_annotations_latlngs(latlngs)
-    
-    # import random
-    # latlngs = [
-    #     dict(lat=random.uniform(scene.bounds[1], scene.bounds[3]), lng=random.uniform(scene.bounds[0], scene.bounds[2])) for _ in range(3)
-    # ]
-    # scene.create_area_annotation_latlngs(latlngs)
-
-    # import random
-    # xys = [
-    #     [ random.randint(0, scene.ortho_width), random.randint(0, scene.ortho_height)] for _ in range(3)
-    # ]
-    # scene.create_area_annotation_ortho(xys)
-    
-    # pixels_of_interest = [
-    #     [1678, 1867],
-    #     [1900, 1874],   
-    # ]
-    # scene.create_issue(camera, pixels_of_interest)
-
-    # import random
-    # xys = [
-    #     [ random.randint(0, scene.ortho_width), random.randint(0, scene.ortho_height)] for _ in range(5)
-    # ]
-    # scene.create_issue_ortho(xys)
+  
